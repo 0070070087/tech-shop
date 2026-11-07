@@ -71,7 +71,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className="bg-indigo-900 text-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3">
           <div className="flex items-center gap-6">
-            <span className="text-lg font-bold">Tech Shop Admin</span>
+            <span className="text-lg font-bold">NOVA&amp;YOU</span>
             <nav className="flex gap-2">
               {tab("/admin", "Products")}
               {tab("/admin/orders", "Orders")}

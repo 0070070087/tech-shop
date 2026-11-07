@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { startPayment } from "@/lib/pay";
 
 type OrderItem = {
   id: number;
@@ -25,10 +26,15 @@ export default function OrdersPage() {
   const [checked, setChecked] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [placed, setPlaced] = useState<string | null>(null);
+  const [justPaid, setJustPaid] = useState(false);
+  const [payingId, setPayingId] = useState<number | null>(null);
+  const [payError, setPayError] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setPlaced(new URLSearchParams(window.location.search).get("placed"));
+    const params = new URLSearchParams(window.location.search);
+    setPlaced(params.get("placed"));
+    setJustPaid(params.get("paid") === "1");
     supabase.auth.getUser().then(async ({ data }) => {
       setUser(data.user);
       setChecked(true);
@@ -43,12 +49,22 @@ export default function OrdersPage() {
     });
   }, []);
 
+  async function pay(id: number) {
+    setPayError("");
+    setPayingId(id);
+    const err = await startPayment(id);
+    if (err) {
+      setPayError(err);
+      setPayingId(null);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
       <header className="bg-gray-900 text-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <Link href="/" className="text-xl font-bold">
-            Tech Shop
+            NOVA&amp;YOU
           </Link>
           <Link href="/" className="text-sm hover:underline">
             ← Back to shop
@@ -59,12 +75,19 @@ export default function OrdersPage() {
       <section className="mx-auto max-w-3xl px-6 py-10">
         <h2 className="mb-6 text-2xl font-semibold">My orders</h2>
 
-        {placed && (
+        {placed && justPaid && (
           <p className="mb-6 rounded bg-green-100 p-3 text-green-800">
-            Order #{placed} placed. Thank you!
+            Payment received for order #{placed}. It will show as paid shortly. Thank you!
           </p>
         )}
 
+        {placed && !justPaid && (
+          <p className="mb-6 rounded bg-yellow-100 p-3 text-yellow-800">
+            Order #{placed} is saved but not paid yet. Click Pay now below to finish.
+          </p>
+        )}
+
+        {payError && <p className="mb-6 rounded bg-red-100 p-3 text-red-700">{payError}</p>}
         {error && <p className="mb-6 rounded bg-red-100 p-3 text-red-700">{error}</p>}
 
         {checked && !user && (
@@ -105,6 +128,15 @@ export default function OrdersPage() {
                 <span>Total</span>
                 <span>€{Number(o.total).toFixed(2)}</span>
               </div>
+              {o.status === "pending" && !(justPaid && String(o.id) === placed) && (
+                <button
+                  onClick={() => pay(o.id)}
+                  disabled={payingId === o.id}
+                  className="mt-3 w-full rounded-lg bg-gray-900 py-2 text-sm text-white hover:bg-gray-700 disabled:opacity-50"
+                >
+                  {payingId === o.id ? "Redirecting to payment..." : "Pay now"}
+                </button>
+              )}
             </div>
           ))}
         </div>

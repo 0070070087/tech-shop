@@ -15,7 +15,7 @@ export default async function Home() {
     <main className="min-h-screen bg-gray-50 text-gray-900">
       <header className="bg-gray-900 text-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <h1 className="text-xl font-bold">Tech Shop</h1>
+          <h1 className="text-xl font-bold">NOVA&amp;YOU</h1>
           <nav className="flex items-center gap-6 text-sm">
             <a href="#">Products</a>
             <AuthNav />

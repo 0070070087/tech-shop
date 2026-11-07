@@ -6,6 +6,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { getCart, saveCart, type CartItem } from "@/lib/cart";
+import { startPayment } from "@/lib/pay";
 
 export default function CartPage() {
   const router = useRouter();
@@ -54,7 +55,8 @@ export default function CartPage() {
       return;
     }
     saveCart([]);
-    router.push("/orders?placed=" + data);
+    const payError = await startPayment(Number(data));
+    if (payError) router.push("/orders?placed=" + data);
   }
 
   const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
@@ -64,7 +66,7 @@ export default function CartPage() {
       <header className="bg-gray-900 text-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <Link href="/" className="text-xl font-bold">
-            Tech Shop
+            NOVA&amp;YOU
           </Link>
           <Link href="/" className="text-sm hover:underline">
             ← Continue shopping
@@ -147,10 +149,10 @@ export default function CartPage() {
               disabled={busy || !user}
               className="mt-4 w-full rounded-lg bg-gray-900 py-2 text-white hover:bg-gray-700 disabled:opacity-40"
             >
-              {busy ? "Placing order..." : "Place order"}
+              {busy ? "Redirecting to payment..." : "Pay with card"}
             </button>
             <p className="mt-2 text-center text-xs text-gray-500">
-              Payment is not connected yet. Orders are saved as pending.
+              Test mode: no real money is charged.
             </p>
           </div>
         )}
