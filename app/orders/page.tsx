@@ -44,6 +44,7 @@ export default function OrdersPage() {
         .from("orders")
         .select("*, order_items(*)")
         .eq("user_id", data.user.id)
+        .neq("source", "pos")
         .order("created_at", { ascending: false });
       if (err) setError(err.message);
       else setOrders((rows as Order[]) ?? []);
