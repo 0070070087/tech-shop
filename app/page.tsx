@@ -36,9 +36,17 @@ export default async function Home() {
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {products?.map((product) => (
             <div key={product.id} className="rounded-xl bg-white p-4 shadow">
-              <div className="mb-4 flex h-32 items-center justify-center rounded-lg bg-gray-200 text-gray-500">
-                Photo
-              </div>
+              {product.image_url ? (
+                <img
+                  src={product.image_url}
+                  alt={product.name}
+                  className="mb-4 h-32 w-full rounded-lg object-cover"
+                />
+              ) : (
+                <div className="mb-4 flex h-32 items-center justify-center rounded-lg bg-gray-200 text-gray-500">
+                  Photo
+                </div>
+              )}
               <h3 className="font-semibold">{product.name}</h3>
               <p className="mt-1 text-sm text-gray-600">{product.description}</p>
               <p className="mt-1 text-xs text-gray-500">
