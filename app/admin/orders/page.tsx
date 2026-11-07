@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { statusClass } from "@/lib/status";
 
 type OrderItem = {
   id: number;
@@ -92,7 +93,7 @@ export default function AdminOrdersPage() {
                 <select
                   value={o.status}
                   onChange={(e) => setStatus(o.id, e.target.value)}
-                  className="rounded-lg border border-gray-300 px-2 py-1 text-sm"
+                  className={"rounded-lg border px-2 py-1 text-sm " + statusClass(o.status)}
                 >
                   {STATUSES.map((s) => (
                     <option key={s} value={s}>

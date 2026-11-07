@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { startPayment } from "@/lib/pay";
+import { statusClass } from "@/lib/status";
 
 type OrderItem = {
   id: number;
@@ -107,7 +108,7 @@ export default function OrdersPage() {
             <div key={o.id} className="rounded-xl bg-white p-4 shadow">
               <div className="flex items-center justify-between">
                 <p className="font-semibold">Order #{o.id}</p>
-                <span className="rounded-full bg-gray-200 px-3 py-1 text-xs capitalize">
+                <span className={"rounded-full px-3 py-1 text-xs capitalize " + statusClass(o.status)}>
                   {o.status}
                 </span>
               </div>
