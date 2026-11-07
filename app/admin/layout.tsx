@@ -75,6 +75,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <nav className="flex gap-2">
               {tab("/admin", "Products")}
               {tab("/admin/orders", "Orders")}
+              {tab("/admin/stock", "Stock history")}
             </nav>
           </div>
           <Link href="/" className="text-sm text-indigo-100 hover:underline">
