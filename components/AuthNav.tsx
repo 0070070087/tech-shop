@@ -5,6 +5,8 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
+const ADMIN_EMAIL = "aqeelsyed781@gmail.com";
+
 export default function AuthNav() {
   const [user, setUser] = useState<User | null>(null);
 
@@ -19,8 +21,16 @@ export default function AuthNav() {
   }, []);
 
   if (user) {
+    const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL;
     return (
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-4">
+        <Link href="/orders" className="hover:underline">My orders</Link>
+        {isAdmin && (
+          <>
+            <Link href="/admin" className="hover:underline">Admin</Link>
+            <Link href="/admin/orders" className="hover:underline">All orders</Link>
+          </>
+        )}
         <span className="text-xs text-gray-300">{user.email}</span>
         <button onClick={() => supabase.auth.signOut()} className="hover:underline">
           Logout
