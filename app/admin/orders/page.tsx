@@ -62,17 +62,6 @@ export default function AdminOrdersPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
-      <header className="bg-gray-900 text-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <Link href="/" className="text-xl font-bold">
-            Tech Shop
-          </Link>
-          <Link href="/admin" className="text-sm hover:underline">
-            ← Admin products
-          </Link>
-        </div>
-      </header>
-
       <section className="mx-auto max-w-3xl px-6 py-10">
         <h2 className="mb-6 text-2xl font-semibold">All orders</h2>
 

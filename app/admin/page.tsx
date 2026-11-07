@@ -145,15 +145,6 @@ export default function AdminPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
-      <header className="bg-gray-900 text-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <Link href="/" className="text-xl font-bold">
-            Tech Shop
-          </Link>
-          <span className="text-sm">Admin</span>
-        </div>
-      </header>
-
       <section className="mx-auto max-w-3xl px-6 py-10">
         {checked && !user && (
           <p className="mb-6 rounded bg-yellow-100 p-3 text-yellow-800">
