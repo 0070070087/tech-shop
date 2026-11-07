@@ -1,5 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import AuthNav from "@/components/AuthNav";
+import CartLink from "@/components/CartLink";
+import AddToCartButton from "@/components/AddToCartButton";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +19,7 @@ export default async function Home() {
           <nav className="flex items-center gap-6 text-sm">
             <a href="#">Products</a>
             <AuthNav />
-            <a href="#">Cart</a>
+            <CartLink />
           </nav>
         </div>
       </header>
@@ -44,12 +46,12 @@ export default async function Home() {
               </p>
               <div className="mt-4 flex items-center justify-between">
                 <span className="font-bold">€{Number(product.price).toFixed(2)}</span>
-                <button
-                  disabled={product.stock === 0}
-                  className="rounded-lg bg-gray-900 px-3 py-1 text-sm text-white hover:bg-gray-700 disabled:opacity-40"
-                >
-                  Add to cart
-                </button>
+                <AddToCartButton
+                  id={product.id}
+                  name={product.name}
+                  price={Number(product.price)}
+                  stock={product.stock}
+                />
               </div>
             </div>
           ))}
