@@ -52,7 +52,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   const tab = (href: string, label: string) => {
-    const active = pathname === href;
+    const active = href === "/admin" ? pathname === href : pathname === href || pathname.startsWith(href + "/");
     return (
       <Link
         href={href}
@@ -72,11 +72,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3">
           <div className="flex items-center gap-6">
             <span className="text-lg font-bold">NOVA&amp;YOU</span>
-            <nav className="flex gap-2">
+            <nav className="flex flex-wrap gap-2">
               {tab("/admin/dashboard", "Dashboard")}
               {tab("/admin/pos", "POS")}
+              {tab("/admin/sales", "Till sales")}
               {tab("/admin", "Products")}
               {tab("/admin/orders", "Orders")}
+              {tab("/admin/phones", "Phones")}
+              {tab("/admin/people", "People")}
               {tab("/admin/stock", "Stock history")}
             </nav>
           </div>

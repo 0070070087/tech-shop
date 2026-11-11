@@ -15,7 +15,7 @@ type Order = {
 
 // Only paid and shipped orders count as sales.
 const COUNTED = ["paid", "shipped"];
-const STATUSES = ["pending", "paid", "shipped", "cancelled"];
+const STATUSES = ["pending", "paid", "shipped", "cancelled", "refunded"];
 
 function dayKey(d: Date): string {
   const y = d.getFullYear();

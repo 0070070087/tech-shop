@@ -22,7 +22,7 @@ type Order = {
   order_items: OrderItem[];
 };
 
-const STATUSES = ["pending", "paid", "shipped", "cancelled"];
+const STATUSES = ["pending", "paid", "shipped", "cancelled", "refunded"];
 
 export default function AdminOrdersPage() {
   const [user, setUser] = useState<User | null>(null);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Product = {
@@ -9,6 +9,7 @@ type Product = {
   price: number;
   stock: number;
   image_url: string | null;
+  barcode: string | null;
 };
 
 type Line = { id: number; name: string; price: number; qty: number };
@@ -35,12 +36,17 @@ export default function PosPage() {
   const [given, setGiven] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [info, setInfo] = useState("");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [scan, setScan] = useState("");
+  const [missingCode, setMissingCode] = useState<string | null>(null);
+  const [linkId, setLinkId] = useState("");
+  const scanRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     const { data } = await supabase
       .from("products")
-      .select("id, name, price, stock, image_url")
+      .select("id, name, price, stock, image_url, barcode")
       .order("name");
     const rows = (data ?? []) as {
       id: number;
@@ -48,6 +54,7 @@ export default function PosPage() {
       price: number | string;
       stock: number;
       image_url: string | null;
+      barcode: string | null;
     }[];
     setProducts(rows.map((r) => ({ ...r, price: Number(r.price) })));
   }, []);
@@ -55,6 +62,10 @@ export default function PosPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  function focusScan() {
+    setTimeout(() => scanRef.current?.focus(), 0);
+  }
 
   const total =
     Math.round(lines.reduce((sum, l) => sum + l.price * l.qty, 0) * 100) / 100;
@@ -64,7 +75,14 @@ export default function PosPage() {
     givenNum === null ||
     (!isNaN(givenNum) && givenNum + 0.001 >= total);
 
-  function add(p: Product) {
+  function add(p: Product): boolean {
+    const inSale = lines.find((l) => l.id === p.id)?.qty ?? 0;
+    if (inSale >= p.stock) {
+      setMessage(
+        p.stock < 1 ? p.name + " is out of stock." : "No more stock of " + p.name + "."
+      );
+      return false;
+    }
     setMessage("");
     setLines((cur) => {
       const found = cur.find((l) => l.id === p.id);
@@ -72,9 +90,59 @@ export default function PosPage() {
         if (found.qty >= p.stock) return cur;
         return cur.map((l) => (l.id === p.id ? { ...l, qty: l.qty + 1 } : l));
       }
-      if (p.stock < 1) return cur;
       return [...cur, { id: p.id, name: p.name, price: p.price, qty: 1 }];
     });
+    return true;
+  }
+
+  function handleScan(e: React.FormEvent) {
+    e.preventDefault();
+    const code = scan.trim();
+    if (!code) return;
+    setScan("");
+    setInfo("");
+    const p = products.find((x) => x.barcode === code);
+    if (p) {
+      setMissingCode(null);
+      if (add(p)) setInfo("Added " + p.name);
+    } else {
+      setMissingCode(code);
+      setLinkId("");
+      setMessage("");
+    }
+    focusScan();
+  }
+
+  async function linkBarcode() {
+    if (!missingCode || !linkId) return;
+    setMessage("");
+    const id = Number(linkId);
+    const { data, error } = await supabase
+      .from("products")
+      .update({ barcode: missingCode })
+      .eq("id", id)
+      .select();
+    if (error) {
+      setMessage(
+        error.code === "23505"
+          ? "That barcode is already linked to another product."
+          : "Could not save the barcode. Check you are logged in as admin."
+      );
+      return;
+    }
+    if (!data || data.length === 0) {
+      setMessage("Not allowed. Log in with the admin account.");
+      return;
+    }
+    const p = products.find((x) => x.id === id);
+    const code = missingCode;
+    setMissingCode(null);
+    setLinkId("");
+    await load();
+    if (p && add({ ...p, barcode: code })) {
+      setInfo("Linked and added " + p.name);
+    }
+    focusScan();
   }
 
   function changeQty(id: number, delta: number) {
@@ -94,6 +162,7 @@ export default function PosPage() {
     if (lines.length === 0) return;
     setBusy(true);
     setMessage("");
+    setInfo("");
     const { data, error } = await supabase.rpc("pos_sale", {
       items: lines.map((l) => ({ id: l.id, quantity: l.qty })),
       pay_method: method,
@@ -127,6 +196,7 @@ export default function PosPage() {
     setLines([]);
     setGiven("");
     setMethod("cash");
+    setMissingCode(null);
     setBusy(false);
     load();
   }
@@ -198,20 +268,77 @@ export default function PosPage() {
         {message && (
           <p className="mb-4 rounded bg-red-100 p-3 text-sm text-red-700">{message}</p>
         )}
+        {info && (
+          <p className="mb-4 rounded bg-green-100 p-3 text-sm text-green-800">{info}</p>
+        )}
 
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2">
+            <form onSubmit={handleScan} className="mb-4">
+              <input
+                ref={scanRef}
+                autoFocus
+                value={scan}
+                onChange={(e) => setScan(e.target.value)}
+                placeholder="Scan barcode here (or type the number and press Return)"
+                className="w-full rounded-lg border-2 border-indigo-300 px-3 py-2"
+              />
+            </form>
+
+            {missingCode && (
+              <div className="mb-4 rounded-xl border border-yellow-300 bg-yellow-50 p-3 text-sm">
+                <p className="mb-2">
+                  Barcode <b>{missingCode}</b> is not linked to a product yet. Choose the
+                  product it belongs to:
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <select
+                    value={linkId}
+                    onChange={(e) => setLinkId(e.target.value)}
+                    className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2"
+                  >
+                    <option value="">Choose a product...</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                        {p.barcode ? " (already has a barcode)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={linkBarcode}
+                    disabled={!linkId}
+                    className="rounded-lg bg-gray-900 px-4 py-2 text-white hover:bg-gray-700 disabled:opacity-40"
+                  >
+                    Link and add
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMissingCode(null);
+                      focusScan();
+                    }}
+                    className="rounded-lg border border-gray-300 px-4 py-2 hover:bg-gray-100"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search products"
+              placeholder="Search products by name"
               className="mb-4 w-full rounded-lg border border-gray-300 px-3 py-2"
             />
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {shown.map((p) => (
                 <button
                   key={p.id}
-                  onClick={() => add(p)}
+                  onClick={() => {
+                    add(p);
+                    focusScan();
+                  }}
                   disabled={p.stock < 1}
                   className="rounded-xl bg-white p-3 text-left shadow hover:bg-gray-50 disabled:opacity-40"
                 >
@@ -231,6 +358,9 @@ export default function PosPage() {
                   <p className="text-xs text-gray-500">
                     {p.stock > 0 ? p.stock + " in stock" : "Out of stock"}
                   </p>
+                  <p className="text-xs text-gray-400">
+                    {p.barcode ? "Barcode " + p.barcode : "No barcode"}
+                  </p>
                 </button>
               ))}
             </div>
@@ -243,7 +373,7 @@ export default function PosPage() {
             <h3 className="mb-3 font-semibold">Current sale</h3>
 
             {lines.length === 0 ? (
-              <p className="text-sm text-gray-500">Tap a product to add it.</p>
+              <p className="text-sm text-gray-500">Scan or tap a product to add it.</p>
             ) : (
               <ul className="divide-y divide-gray-100">
                 {lines.map((l) => (
@@ -342,6 +472,7 @@ export default function PosPage() {
                 onClick={() => {
                   setLines([]);
                   setGiven("");
+                  focusScan();
                 }}
                 className="mt-2 w-full text-sm text-gray-600 hover:underline"
               >
