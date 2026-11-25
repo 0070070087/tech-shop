@@ -1,30 +1,34 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { db } from "../../../lib/db";
 
 type Phone = {
-  id: number;
-  brand: string;
-  model: string;
+  id: string | number;
+  brand: string | null;
+  model: string | null;
   storage: string | null;
   ram: string | null;
   color: string | null;
   imei: string | null;
-  battery_health: number | null;
-  condition: string;
+  battery_health: string | number | null;
+  condition: string | null;
   problems: string | null;
   accessories: string | null;
-  consignor_name: string;
+  consignor_name: string | null;
   consignor_phone: string | null;
-  owner_price: number | string;
-  display_price: number | string;
+  portal_code: string | null;
+  owner_price: number | null;
+  owner_payout: number | null;
+  display_price: number | null;
   status: string;
   notes: string | null;
+  shop_message: string | null;
+  show_online: boolean | null;
   image_url: string | null;
-  received_at: string;
+  received_at: string | null;
   sold_at: string | null;
-  sold_price: number | string | null;
+  sold_price: number | null;
   owner_paid_at: string | null;
 };
 
@@ -35,820 +39,827 @@ type Form = {
   ram: string;
   color: string;
   imei: string;
-  battery: string;
+  battery_health: string;
   condition: string;
   problems: string;
   accessories: string;
-  consignorName: string;
-  consignorPhone: string;
-  ownerPrice: string;
-  displayPrice: string;
+  consignor_name: string;
+  consignor_phone: string;
+  portal_code: string;
+  owner_price: string;
+  owner_payout: string;
+  display_price: string;
+  status: string;
   notes: string;
+  shop_message: string;
+  show_online: boolean;
+  received_at: string;
 };
 
-const emptyForm: Form = {
+const today = () => new Date().toISOString().slice(0, 10);
+
+const EMPTY: Form = {
   brand: "",
   model: "",
   storage: "",
   ram: "",
   color: "",
   imei: "",
-  battery: "",
-  condition: "good",
+  battery_health: "",
+  condition: "Good",
   problems: "",
   accessories: "",
-  consignorName: "",
-  consignorPhone: "",
-  ownerPrice: "",
-  displayPrice: "",
+  consignor_name: "",
+  consignor_phone: "",
+  portal_code: "",
+  owner_price: "",
+  owner_payout: "",
+  display_price: "",
+  status: "available",
   notes: "",
+  shop_message: "",
+  show_online: false,
+  received_at: today(),
 };
 
-const BUCKET = "product-images";
-const denied = "Not allowed. Log in with the admin account.";
+const STATUSES = ["available", "reserved", "sold", "returned"] as const;
 
-const CONDITIONS: [string, string][] = [
-  ["like_new", "Like new"],
-  ["good", "Good"],
-  ["fair", "Fair"],
-  ["parts", "For parts or repair"],
-];
+const PILL: Record<string, string> = {
+  available: "bg-[#F28C28]/15 text-[#C2570C] ring-[#F28C28]/40",
+  reserved: "bg-[#FFB347]/25 text-[#8a4a0a] ring-[#FFB347]/60",
+  sold: "bg-emerald-100 text-emerald-800 ring-emerald-300",
+  returned: "bg-slate-200 text-slate-700 ring-slate-300",
+};
 
-const FILTERS: [string, string][] = [
-  ["available", "Available"],
-  ["reserved", "Reserved"],
-  ["sold", "Sold"],
-  ["returned", "Returned"],
-  ["all", "All"],
-];
+const money = (n: number | null | undefined) =>
+  n === null || n === undefined ? "-" : "€" + Number(n).toLocaleString("en-GB", { maximumFractionDigits: 2 });
 
-const inputClass =
-  "w-full rounded-lg border border-[#E0D2BC] bg-white px-3 py-2 text-sm text-[#14213D] outline-none focus:border-[#F28C28] focus:ring-2 focus:ring-[#F28C28]/20";
-
-function euro(n: number): string {
-  return "€" + n.toFixed(2);
+function fmtDate(d: string | null) {
+  if (!d) return "";
+  const x = new Date(d);
+  return isNaN(x.getTime()) ? "" : x.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function conditionLabel(c: string): string {
-  return CONDITIONS.find((x) => x[0] === c)?.[1] ?? c;
+// What the owner really gets: the final payout if one was set, otherwise the agreed price.
+const payoutOf = (p: { owner_payout: number | null; owner_price: number | null }) =>
+  p.owner_payout !== null && p.owner_payout !== undefined ? p.owner_payout : p.owner_price;
+
+const toNum = (s: string) => (s.trim() === "" ? null : Number(s));
+const toText = (s: string) => (s.trim() === "" ? null : s.trim());
+
+// Last 8 digits of a phone number, so "+357 99 123456" and "99123456" match.
+const phoneKey = (s: string) => {
+  const digits = s.replace(/\D/g, "");
+  return digits.length >= 8 ? digits.slice(-8) : "";
+};
+
+// 6-character code without confusing letters (no 0/O, 1/I).
+function makeCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => alphabet[b % 32]).join("");
 }
 
-function statusBadge(s: string): string {
-  switch (s) {
-    case "sold":
-      return "bg-emerald-100 text-emerald-800 border-emerald-300";
-    case "reserved":
-      return "bg-[#FDE7CC] text-[#C2570C] border-[#F6C48C]";
-    case "returned":
-      return "bg-[#EADFCB] text-[#14213D]/70 border-[#D9C9AD]";
-    default:
-      return "bg-[#DCE3F2] text-[#14213D] border-[#B6C3E0]";
-  }
-}
-
-async function uploadImage(file: File): Promise<string | null> {
-  const ext = file.name.split(".").pop() || "jpg";
-  const path = "phone-" + Date.now() + "-" + Math.random().toString(36).slice(2) + "." + ext;
-  const { error } = await supabase.storage.from(BUCKET).upload(path, file);
-  if (error) return null;
-  return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
-}
-
-export default function PhonesPage() {
+export default function AdminPhonesPage() {
   const [phones, setPhones] = useState<Phone[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [filter, setFilter] = useState("available");
-  const [search, setSearch] = useState("");
-  const [message, setMessage] = useState("");
-  const [info, setInfo] = useState("");
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState<Form>(emptyForm);
-  const [file, setFile] = useState<File | null>(null);
-  const [fileKey, setFileKey] = useState(0);
-  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const [filter, setFilter] = useState<"all" | (typeof STATUSES)[number]>("all");
+  const [q, setQ] = useState("");
 
-  const load = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("phones")
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (error) setMessage(error.message);
-    else setPhones((data as Phone[]) ?? []);
-    setLoaded(true);
-  }, []);
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState<string | number | null>(null);
+  const [form, setForm] = useState<Form>(EMPTY);
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [existingImage, setExistingImage] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // per-phone quick message boxes
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  async function load() {
+    setLoading(true);
+    const { data, error } = await db.from("phones").select("*").order("received_at", { ascending: false });
+    if (error) setErr("Could not load phones: " + error.message);
+    else {
+      setErr("");
+      setPhones((data as Phone[]) ?? []);
+    }
+    setLoading(false);
+  }
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, []);
 
-  function setField(key: keyof Form, value: string) {
-    setForm((f) => ({ ...f, [key]: value }));
+  function flash(text: string) {
+    setMsg(text);
+    setTimeout(() => setMsg(""), 3500);
   }
 
-  function openAdd() {
-    setEditingId(null);
-    setForm(emptyForm);
-    setFile(null);
-    setFileKey((k) => k + 1);
-    setMessage("");
-    setInfo("");
+  function set<K extends keyof Form>(k: K, v: Form[K]) {
+    setForm((f) => ({ ...f, [k]: v }));
+  }
+
+  function openNew() {
+    setEditId(null);
+    setForm({ ...EMPTY, received_at: today() });
+    setPhoto(null);
+    setExistingImage(null);
     setShowForm(true);
+    setErr("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function openEdit(p: Phone) {
-    setEditingId(p.id);
+    setEditId(p.id);
     setForm({
-      brand: p.brand,
-      model: p.model,
+      brand: p.brand ?? "",
+      model: p.model ?? "",
       storage: p.storage ?? "",
       ram: p.ram ?? "",
       color: p.color ?? "",
       imei: p.imei ?? "",
-      battery: p.battery_health === null ? "" : String(p.battery_health),
-      condition: p.condition,
+      battery_health: p.battery_health === null || p.battery_health === undefined ? "" : String(p.battery_health),
+      condition: p.condition ?? "",
       problems: p.problems ?? "",
       accessories: p.accessories ?? "",
-      consignorName: p.consignor_name,
-      consignorPhone: p.consignor_phone ?? "",
-      ownerPrice: String(Number(p.owner_price)),
-      displayPrice: String(Number(p.display_price)),
+      consignor_name: p.consignor_name ?? "",
+      consignor_phone: p.consignor_phone ?? "",
+      portal_code: p.portal_code ?? "",
+      owner_price: p.owner_price === null ? "" : String(p.owner_price),
+      owner_payout: p.owner_payout === null || p.owner_payout === undefined ? "" : String(p.owner_payout),
+      display_price: p.display_price === null ? "" : String(p.display_price),
+      status: p.status,
       notes: p.notes ?? "",
+      shop_message: p.shop_message ?? "",
+      show_online: !!p.show_online,
+      received_at: p.received_at ? p.received_at.slice(0, 10) : today(),
     });
-    setFile(null);
-    setFileKey((k) => k + 1);
-    setMessage("");
-    setInfo("");
+    setPhoto(null);
+    setExistingImage(p.image_url);
     setShowForm(true);
+    setErr("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function closeForm() {
     setShowForm(false);
-    setEditingId(null);
+    setEditId(null);
   }
 
-  async function save(e: React.FormEvent) {
+  async function save(e: FormEvent) {
     e.preventDefault();
-    setMessage("");
-    setInfo("");
-
-    const ownerPrice = Number(form.ownerPrice);
-    const displayPrice = Number(form.displayPrice);
-    if (
-      form.ownerPrice.trim() === "" ||
-      form.displayPrice.trim() === "" ||
-      isNaN(ownerPrice) ||
-      isNaN(displayPrice) ||
-      ownerPrice < 0 ||
-      displayPrice < 0
-    ) {
-      setMessage("Enter both prices as numbers, for example 250.");
+    setErr("");
+    if (!form.brand.trim() || !form.model.trim()) {
+      setErr("Please fill in at least the brand and the model.");
       return;
     }
+    const key = phoneKey(form.consignor_phone);
+    if (form.consignor_phone.trim() && !key) {
+      setErr("The owner's phone number needs at least 8 digits, so they can use the portal.");
+      return;
+    }
+    // One code per owner phone number: reuse it if this owner already has one.
+    let code: string | null = form.portal_code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") || null;
+    if (!key) code = null;
+    else if (!code) code = phones.find((x) => x.portal_code && phoneKey(x.consignor_phone ?? "") === key)?.portal_code ?? makeCode();
+    if (code && code.length < 4) {
+      setErr("The portal code needs at least 4 letters or numbers.");
+      return;
+    }
+    setSaving(true);
 
-    let battery: number | null = null;
-    if (form.battery.trim() !== "") {
-      battery = Math.round(Number(form.battery));
-      if (isNaN(battery) || battery < 0 || battery > 100) {
-        setMessage("Battery health must be a number from 0 to 100.");
+    let image_url = existingImage;
+    if (photo) {
+      const ext = (photo.name.split(".").pop() || "jpg").toLowerCase();
+      const path = `phones/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const up = await db.storage.from("product-images").upload(path, photo);
+      if (up.error) {
+        setErr("Photo upload failed: " + up.error.message);
+        setSaving(false);
         return;
       }
+      image_url = db.storage.from("product-images").getPublicUrl(path).data.publicUrl;
     }
 
-    setBusy(true);
-
-    let image_url: string | undefined;
-    if (file) {
-      const url = await uploadImage(file);
-      if (!url) {
-        setBusy(false);
-        setMessage("Photo upload failed. Check you are logged in as admin.");
-        return;
-      }
-      image_url = url;
-    }
-
-    const payload = {
-      brand: form.brand.trim(),
-      model: form.model.trim(),
-      storage: form.storage.trim() || null,
-      ram: form.ram.trim() || null,
-      color: form.color.trim() || null,
-      imei: form.imei.trim() || null,
-      battery_health: battery,
-      condition: form.condition,
-      problems: form.problems.trim() || null,
-      accessories: form.accessories.trim() || null,
-      consignor_name: form.consignorName.trim(),
-      consignor_phone: form.consignorPhone.trim() || null,
-      owner_price: ownerPrice,
-      display_price: displayPrice,
-      notes: form.notes.trim() || null,
-      ...(image_url ? { image_url } : {}),
+    const row = {
+      brand: toText(form.brand),
+      model: toText(form.model),
+      storage: toText(form.storage),
+      ram: toText(form.ram),
+      color: toText(form.color),
+      imei: toText(form.imei),
+      battery_health: toText(form.battery_health),
+      condition: toText(form.condition),
+      problems: toText(form.problems),
+      accessories: toText(form.accessories),
+      consignor_name: toText(form.consignor_name),
+      consignor_phone: toText(form.consignor_phone),
+      portal_code: code,
+      owner_price: toNum(form.owner_price),
+      owner_payout: toNum(form.owner_payout),
+      display_price: toNum(form.display_price),
+      status: form.status,
+      notes: toText(form.notes),
+      shop_message: toText(form.shop_message),
+      show_online: form.show_online,
+      received_at: form.received_at || today(),
+      image_url,
     };
 
-    const result =
-      editingId === null
-        ? await supabase.from("phones").insert(payload).select()
-        : await supabase.from("phones").update(payload).eq("id", editingId).select();
+    const res =
+      editId === null ? await db.from("phones").insert(row) : await db.from("phones").update(row).eq("id", editId);
 
-    setBusy(false);
-
-    if (result.error) {
-      setMessage(
-        result.error.code === "23505"
+    setSaving(false);
+    if (res.error) {
+      setErr(
+        res.error.code === "23505"
           ? "A phone with this IMEI is already in the list."
-          : denied
+          : res.error.message.includes("portal_code") || res.error.message.includes("owner_payout") || res.error.message.includes("shop_message") || res.error.message.includes("show_online")
+          ? "The database is missing the new columns - run the SQL step first."
+          : "Could not save: " + res.error.message
       );
       return;
     }
-    if (!result.data || result.data.length === 0) {
-      setMessage(denied);
-      return;
+    if (code && key) {
+      const others = phones
+        .filter((x) => x.id !== editId && phoneKey(x.consignor_phone ?? "") === key && x.portal_code !== code)
+        .map((x) => x.id);
+      if (others.length) await db.from("phones").update({ portal_code: code }).in("id", others);
     }
-
-    setInfo(editingId === null ? "Phone added." : "Phone updated.");
+    flash(editId === null ? "Phone added." : "Phone saved.");
     closeForm();
     load();
   }
 
-  async function patch(p: Phone, values: Record<string, unknown>, okText: string) {
-    setMessage("");
-    setInfo("");
-    const { data, error } = await supabase
-      .from("phones")
-      .update(values)
-      .eq("id", p.id)
-      .select();
-    if (error || !data || data.length === 0) {
-      setMessage(denied);
-      return;
-    }
-    setInfo(okText);
-    load();
-  }
-
-  function toggleReserve(p: Phone) {
-    if (p.status === "reserved") {
-      patch(p, { status: "available" }, "Reservation removed.");
-    } else {
-      patch(p, { status: "reserved" }, "Phone reserved.");
+  async function patch(p: Phone, changes: Partial<Phone>, done: string) {
+    const { error } = await db.from("phones").update(changes).eq("id", p.id);
+    if (error) setErr("Could not update: " + error.message);
+    else {
+      setErr("");
+      flash(done);
+      load();
     }
   }
 
   function markSold(p: Phone) {
-    const answer = window.prompt(
-      "Sold price in euros for " + p.brand + " " + p.model,
-      String(Number(p.display_price))
-    );
+    const answer = window.prompt("Sold for how much (€)?", p.display_price === null ? "" : String(p.display_price));
     if (answer === null) return;
-    const price = Number(answer);
-    if (answer.trim() === "" || isNaN(price) || price < 0) {
-      setMessage("Enter a valid sold price.");
+    const price = Number(answer.replace(",", "."));
+    if (answer.trim() === "" || isNaN(price)) {
+      setErr("Please type the selling price as a number.");
       return;
     }
-    const ownerPrice = Number(p.owner_price);
-    if (
-      price < ownerPrice &&
-      !window.confirm(
-        "This is less than the owner wants (" + euro(ownerPrice) + "). Continue?"
-      )
-    ) {
-      return;
-    }
-    patch(
-      p,
-      { status: "sold", sold_at: new Date().toISOString(), sold_price: price },
-      "Marked as sold. Remember to pay the owner " + euro(ownerPrice) + "."
-    );
-  }
 
-  function undoSale(p: Phone) {
-    if (!window.confirm("Undo this sale and put the phone back as available?")) return;
-    patch(
-      p,
-      { status: "available", sold_at: null, sold_price: null },
-      "Sale undone."
-    );
+    const agreed = p.owner_price; // what the owner wants
+    const listed = p.display_price; // the price on the shelf
+    let payout: number | null = p.owner_payout ?? null; // null = the owner gets the agreed price
+    let ownerNote: string | null = null;
+
+    if (agreed !== null && listed !== null && price < listed) {
+      // Sold below the shelf price: the shop keeps its agreed commission, the owner takes the discount.
+      const commission = Math.max(0, listed - agreed);
+      const suggested = Math.max(0, price - commission);
+      const reply = window.prompt(
+        `Sold for ${money(price)}, which is ${money(listed - price)} below the listed ${money(listed)}.\n\n` +
+          `The shop keeps its agreed commission of ${money(commission)}, so the owner gets ${money(suggested)}.\n\n` +
+          `How much does the owner get (€)?\nChange it only if you agreed something different with the owner.`,
+        String(suggested)
+      );
+      if (reply === null) return;
+      const n = Number(reply.replace(",", "."));
+      if (reply.trim() === "" || isNaN(n) || n < 0) {
+        setErr("Please type the owner's payout as a number.");
+        return;
+      }
+      payout = n === agreed ? null : n;
+      if (payout !== null) {
+        ownerNote = `Sold for ${money(price)} (listed at ${money(listed)}, then a customer discount). Your final amount is ${money(payout)} instead of the agreed ${money(agreed)}.`;
+      }
+    } else if (agreed !== null && listed === null && price < agreed) {
+      // No shelf price recorded: just ask what the owner gets.
+      const reply = window.prompt(
+        `Sold for ${money(price)}, which is ${money(agreed - price)} below the agreed ${money(agreed)}.\n\n` +
+          `How much does the owner get (€)?\nKeep ${agreed} if the shop takes the loss. Type a lower amount only if the owner agreed.`,
+        String(agreed)
+      );
+      if (reply === null) return;
+      const n = Number(reply.replace(",", "."));
+      if (reply.trim() === "" || isNaN(n) || n < 0) {
+        setErr("Please type the owner's payout as a number.");
+        return;
+      }
+      payout = n === agreed ? null : n;
+      if (payout !== null) {
+        ownerNote = `Sold for ${money(price)}. Your final amount is ${money(payout)} instead of the agreed ${money(agreed)}.`;
+      }
+    }
+
+    const finalPayout = payout !== null ? payout : agreed;
+    if (finalPayout !== null && price - finalPayout < 0) {
+      const ok = window.confirm(
+        `The shop will lose ${money(finalPayout - price)} on this phone ` +
+          `(sold ${money(price)}, owner gets ${money(finalPayout)}).\n\nContinue?`
+      );
+      if (!ok) return;
+    }
+
+    const changes: Partial<Phone> = {
+      status: "sold",
+      sold_price: price,
+      owner_payout: payout,
+      sold_at: new Date().toISOString(),
+    };
+    // Tell the owner why the amount is different, unless you already wrote a message.
+    const addNote = !!ownerNote && !(p.shop_message ?? "").trim();
+    if (addNote) changes.shop_message = ownerNote;
+    patch(p, changes, addNote ? "Marked as sold. A message was added to the owner's portal." : "Marked as sold.");
   }
 
   function markPaid(p: Phone) {
-    patch(p, { owner_paid_at: new Date().toISOString() }, "Marked as paid to the owner.");
+    if (!window.confirm(`Mark ${p.consignor_name || "the owner"} as paid ${money(payoutOf(p))} for this phone?`)) return;
+    patch(p, { owner_paid_at: new Date().toISOString() }, "Owner marked as paid.");
   }
 
-  function returnToOwner(p: Phone) {
-    if (!window.confirm("Return this phone to " + p.consignor_name + "?")) return;
-    patch(p, { status: "returned" }, "Phone returned to the owner.");
-  }
-
-  async function removePhone(p: Phone) {
-    if (!window.confirm("Delete " + p.brand + " " + p.model + " from the list?")) return;
-    setMessage("");
-    setInfo("");
-    const { data, error } = await supabase
-      .from("phones")
-      .delete()
-      .eq("id", p.id)
-      .select();
-    if (error || !data || data.length === 0) {
-      setMessage(denied);
-      return;
+  async function remove(p: Phone) {
+    if (!window.confirm(`Delete ${p.brand ?? ""} ${p.model ?? ""} for good?`)) return;
+    const { error } = await db.from("phones").delete().eq("id", p.id);
+    if (error) setErr("Could not delete: " + error.message);
+    else {
+      flash("Deleted.");
+      load();
     }
-    setInfo("Phone deleted.");
-    load();
   }
 
-  const inShop = phones.filter((p) => p.status === "available" || p.status === "reserved");
-  const displayValue = inShop.reduce((sum, p) => sum + Number(p.display_price), 0);
-  const sold = phones.filter((p) => p.status === "sold");
-  const owed = sold
-    .filter((p) => !p.owner_paid_at)
-    .reduce((sum, p) => sum + Number(p.owner_price), 0);
-  const earned = sold.reduce(
-    (sum, p) => sum + (Number(p.sold_price ?? 0) - Number(p.owner_price)),
-    0
+  async function copyInvite(p: Phone) {
+    const link = window.location.origin + "/portal";
+    const text =
+      `Hi${p.consignor_name ? " " + p.consignor_name : ""}! You can check the status of your phone any time at ${link}\n` +
+      `Type your phone number and this code: ${p.portal_code}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      flash("Message copied - paste it into WhatsApp or SMS.");
+    } catch {
+      window.prompt("Copy this message:", text);
+    }
+  }
+
+  async function saveMessage(p: Phone) {
+    const text = (drafts[String(p.id)] ?? p.shop_message ?? "").trim();
+    await patch(p, { shop_message: text === "" ? null : text }, "Message saved - the owner can see it now.");
+    setDrafts((d) => {
+      const n = { ...d };
+      delete n[String(p.id)];
+      return n;
+    });
+  }
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { all: phones.length };
+    for (const s of STATUSES) c[s] = phones.filter((p) => p.status === s).length;
+    return c;
+  }, [phones]);
+
+  const owed = useMemo(
+    () => phones.filter((p) => p.status === "sold" && !p.owner_paid_at).reduce((s, p) => s + Number(payoutOf(p) ?? 0), 0),
+    [phones]
+  );
+  const margin = useMemo(
+    () =>
+      phones
+        .filter((p) => p.status === "sold" && p.sold_price !== null && payoutOf(p) !== null)
+        .reduce((s, p) => s + (Number(p.sold_price) - Number(payoutOf(p))), 0),
+    [phones]
   );
 
-  const term = search.toLowerCase();
   const shown = phones.filter((p) => {
     if (filter !== "all" && p.status !== filter) return false;
-    if (!term) return true;
-    return [p.brand, p.model, p.color ?? "", p.imei ?? "", p.consignor_name]
+    const needle = q.trim().toLowerCase();
+    if (!needle) return true;
+    return [p.brand, p.model, p.imei, p.consignor_name, p.consignor_phone, p.color]
+      .filter(Boolean)
       .join(" ")
       .toLowerCase()
-      .includes(term);
+      .includes(needle);
   });
 
-  const card = (label: string, value: string, note?: string) => (
-    <div className="rounded-xl bg-white p-4 shadow">
-      <p className="text-xs uppercase text-[#14213D]/60">{label}</p>
-      <p className="mt-1 text-2xl font-bold">{value}</p>
-      {note && <p className="mt-1 text-xs text-[#14213D]/60">{note}</p>}
-    </div>
-  );
-
-  const field = (label: string, node: React.ReactNode) => (
-    <label className="block">
-      <span className="mb-1 block text-xs font-medium text-[#14213D]/70">{label}</span>
-      {node}
-    </label>
-  );
+  const input =
+    "w-full rounded-lg border border-[#14213D]/20 bg-white px-3 py-2 text-sm outline-none focus:border-[#F28C28] focus:ring-2 focus:ring-[#F28C28]/30";
+  const label = "mb-1 block text-xs font-semibold text-[#14213D]/70";
 
   return (
-    <main className="min-h-screen bg-[#F4EDE2] text-[#14213D]">
-      <section className="mx-auto max-w-5xl px-6 py-10">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-2xl font-semibold">Phones on display</h2>
-          {!showForm && (
-            <button
-              onClick={openAdd}
-              className="rounded-lg bg-[#F28C28] px-4 py-2 text-sm font-semibold text-[#14213D] hover:bg-[#FFA033]"
-            >
-              Add phone
+    <div className="text-[#14213D]">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-extrabold">Phones on consignment</h1>
+          <p className="text-sm text-[#14213D]/60">Phones that owners bring in for the shop to sell.</p>
+        </div>
+        <button onClick={openNew} className="rounded-full bg-[#F28C28] px-5 py-2 font-bold text-white hover:bg-[#C2570C]">
+          + Add phone
+        </button>
+      </div>
+
+      {msg && <p className="mb-3 rounded-lg bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200">{msg}</p>}
+      {err && <p className="mb-3 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700 ring-1 ring-red-200">{err}</p>}
+
+      {/* Numbers */}
+      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="rounded-2xl bg-white p-3 ring-1 ring-[#14213D]/10">
+          <div className="text-xs text-[#14213D]/60">In the shop</div>
+          <div className="text-2xl font-extrabold text-[#C2570C]">{(counts.available ?? 0) + (counts.reserved ?? 0)}</div>
+        </div>
+        <div className="rounded-2xl bg-white p-3 ring-1 ring-[#14213D]/10">
+          <div className="text-xs text-[#14213D]/60">Sold</div>
+          <div className="text-2xl font-extrabold text-emerald-700">{counts.sold ?? 0}</div>
+        </div>
+        <div className="rounded-2xl bg-white p-3 ring-1 ring-[#14213D]/10">
+          <div className="text-xs text-[#14213D]/60">Owed to owners</div>
+          <div className="text-2xl font-extrabold">{money(owed)}</div>
+        </div>
+        <div className="rounded-2xl bg-white p-3 ring-1 ring-[#14213D]/10">
+          <div className="text-xs text-[#14213D]/60">Shop made (sold − owner payout)</div>
+          <div className="text-2xl font-extrabold">{money(margin)}</div>
+        </div>
+      </div>
+
+      {/* Add / edit form */}
+      {showForm && (
+        <form onSubmit={save} className="mb-6 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#14213D]/10">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-extrabold">{editId === null ? "Add a phone" : "Edit phone"}</h2>
+            <button type="button" onClick={closeForm} className="text-sm font-semibold text-[#14213D]/60 hover:text-[#14213D]">
+              Close ✕
             </button>
-          )}
-        </div>
-        <p className="mb-6 text-sm text-[#14213D]/70">
-          Phones brought in by other people to sell. Only you can see this page, including the
-          owner prices.
-        </p>
+          </div>
 
-        {message && (
-          <p className="mb-6 rounded bg-red-100 p-3 text-sm text-red-700">{message}</p>
-        )}
-        {info && (
-          <p className="mb-6 rounded bg-emerald-100 p-3 text-sm text-emerald-800">{info}</p>
-        )}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div>
+              <label className={label}>Brand *</label>
+              <input className={input} value={form.brand} onChange={(e) => set("brand", e.target.value)} placeholder="Samsung" />
+            </div>
+            <div>
+              <label className={label}>Model *</label>
+              <input className={input} value={form.model} onChange={(e) => set("model", e.target.value)} placeholder="Galaxy S23" />
+            </div>
+            <div>
+              <label className={label}>Storage</label>
+              <input className={input} value={form.storage} onChange={(e) => set("storage", e.target.value)} placeholder="256GB" />
+            </div>
+            <div>
+              <label className={label}>RAM</label>
+              <input className={input} value={form.ram} onChange={(e) => set("ram", e.target.value)} placeholder="8GB" />
+            </div>
+            <div>
+              <label className={label}>Colour</label>
+              <input className={input} value={form.color} onChange={(e) => set("color", e.target.value)} placeholder="Black" />
+            </div>
+            <div className="col-span-2">
+              <label className={label}>IMEI</label>
+              <input className={input} value={form.imei} onChange={(e) => set("imei", e.target.value)} placeholder="15 digits (dial *#06#)" />
+            </div>
+            <div>
+              <label className={label}>Battery health</label>
+              <input className={input} value={form.battery_health} onChange={(e) => set("battery_health", e.target.value)} placeholder="87%" />
+            </div>
+            <div>
+              <label className={label}>Condition</label>
+              <input
+                className={input}
+                list="conditions"
+                value={form.condition}
+                onChange={(e) => set("condition", e.target.value)}
+                placeholder="Good"
+              />
+              <datalist id="conditions">
+                <option value="Like new" />
+                <option value="Good" />
+                <option value="Fair" />
+                <option value="Poor" />
+              </datalist>
+            </div>
+            <div className="col-span-2">
+              <label className={label}>Problems</label>
+              <textarea className={input} rows={2} value={form.problems} onChange={(e) => set("problems", e.target.value)} placeholder="Small scratch on the screen, camera focus is slow..." />
+            </div>
+            <div className="col-span-2">
+              <label className={label}>Accessories</label>
+              <textarea className={input} rows={2} value={form.accessories} onChange={(e) => set("accessories", e.target.value)} placeholder="Box, charger, case" />
+            </div>
+          </div>
 
-        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {card("In the shop", String(inShop.length), "Available and reserved")}
-          {card("Display value", euro(displayValue), "At display prices")}
-          {card("Owed to owners", euro(owed), "Sold, not yet paid")}
-          {card("You earned", euro(earned), "From sold phones")}
-        </div>
-
-        {showForm && (
-          <form onSubmit={save} className="mb-8 rounded-xl bg-white p-5 shadow">
-            <h3 className="mb-4 text-lg font-semibold">
-              {editingId === null ? "Add a phone" : "Edit phone"}
-            </h3>
-
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {field(
-                "Brand *",
+          <h3 className="mb-2 mt-5 text-sm font-extrabold uppercase tracking-wide text-[#C2570C]">Owner</h3>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div>
+              <label className={label}>Owner name</label>
+              <input className={input} value={form.consignor_name} onChange={(e) => set("consignor_name", e.target.value)} />
+            </div>
+            <div>
+              <label className={label}>Owner phone</label>
+              <input className={input} value={form.consignor_phone} onChange={(e) => set("consignor_phone", e.target.value)} />
+            </div>
+            <div className="col-span-2">
+              <label className={label}>Portal code (for the owner)</label>
+              <div className="flex gap-2">
                 <input
-                  required
-                  value={form.brand}
-                  onChange={(e) => setField("brand", e.target.value)}
-                  placeholder="Samsung"
-                  className={inputClass}
+                  className={input + " font-mono uppercase tracking-widest"}
+                  value={form.portal_code}
+                  onChange={(e) => set("portal_code", e.target.value.toUpperCase())}
+                  maxLength={12}
+                  placeholder="made automatically when you save"
                 />
-              )}
-              {field(
-                "Model *",
-                <input
-                  required
-                  value={form.model}
-                  onChange={(e) => setField("model", e.target.value)}
-                  placeholder="Galaxy S21"
-                  className={inputClass}
-                />
-              )}
-              {field(
-                "Colour",
-                <input
-                  value={form.color}
-                  onChange={(e) => setField("color", e.target.value)}
-                  placeholder="Phantom Gray"
-                  className={inputClass}
-                />
-              )}
-              {field(
-                "Storage",
-                <input
-                  value={form.storage}
-                  onChange={(e) => setField("storage", e.target.value)}
-                  placeholder="128 GB"
-                  className={inputClass}
-                />
-              )}
-              {field(
-                "RAM",
-                <input
-                  value={form.ram}
-                  onChange={(e) => setField("ram", e.target.value)}
-                  placeholder="8 GB"
-                  className={inputClass}
-                />
-              )}
-              {field(
-                "Battery health (%)",
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={form.battery}
-                  onChange={(e) => setField("battery", e.target.value)}
-                  placeholder="87"
-                  className={inputClass}
-                />
-              )}
-              {field(
-                "IMEI or serial number",
-                <input
-                  value={form.imei}
-                  onChange={(e) => setField("imei", e.target.value)}
-                  placeholder="15 digits"
-                  className={inputClass}
-                />
-              )}
-              {field(
-                "Condition",
-                <select
-                  value={form.condition}
-                  onChange={(e) => setField("condition", e.target.value)}
-                  className={inputClass}
+                <button
+                  type="button"
+                  onClick={() => set("portal_code", makeCode())}
+                  className="whitespace-nowrap rounded-lg border border-[#14213D]/20 px-3 py-2 text-sm font-semibold hover:bg-[#F4EDE2]"
                 >
-                  {CONDITIONS.map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {field(
-                "Included",
-                <input
-                  value={form.accessories}
-                  onChange={(e) => setField("accessories", e.target.value)}
-                  placeholder="Box, charger, case"
-                  className={inputClass}
-                />
-              )}
+                  New code
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-[#14213D]/60">
+                The owner types their phone number + this code on the portal page. All phones of the same owner share one code.
+              </p>
             </div>
-
-            <div className="mt-4">
-              {field(
-                "Problems (scratches, cracks, battery, anything wrong)",
-                <textarea
-                  rows={3}
-                  value={form.problems}
-                  onChange={(e) => setField("problems", e.target.value)}
-                  placeholder="Small scratch on the back. Face ID not working."
-                  className={inputClass}
-                />
-              )}
+            <div>
+              <label className={label}>Owner wants (€)</label>
+              <input className={input} inputMode="decimal" value={form.owner_price} onChange={(e) => set("owner_price", e.target.value)} />
             </div>
-
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {field(
-                "Owner name *",
-                <input
-                  required
-                  value={form.consignorName}
-                  onChange={(e) => setField("consignorName", e.target.value)}
-                  placeholder="Colleague's name"
-                  className={inputClass}
-                />
-              )}
-              {field(
-                "Owner phone number",
-                <input
-                  value={form.consignorPhone}
-                  onChange={(e) => setField("consignorPhone", e.target.value)}
-                  placeholder="+357 ..."
-                  className={inputClass}
-                />
-              )}
-              {field(
-                "Owner wants (€) *",
-                <input
-                  required
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={form.ownerPrice}
-                  onChange={(e) => setField("ownerPrice", e.target.value)}
-                  placeholder="250"
-                  className={inputClass}
-                />
-              )}
-              {field(
-                "Display price (€) *",
-                <input
-                  required
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={form.displayPrice}
-                  onChange={(e) => setField("displayPrice", e.target.value)}
-                  placeholder="290"
-                  className={inputClass}
-                />
-              )}
+            <div>
+              <label className={label}>Display price (€)</label>
+              <input className={input} inputMode="decimal" value={form.display_price} onChange={(e) => set("display_price", e.target.value)} />
             </div>
-
-            {form.ownerPrice.trim() !== "" &&
-              form.displayPrice.trim() !== "" &&
-              !isNaN(Number(form.ownerPrice)) &&
-              !isNaN(Number(form.displayPrice)) && (
-                <p className="mt-3 text-sm">
-                  You would earn{" "}
-                  <b className="text-[#C2570C]">
-                    {euro(Number(form.displayPrice) - Number(form.ownerPrice))}
-                  </b>{" "}
-                  if it sells at the display price.
-                </p>
-              )}
-
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              {field(
-                "Notes",
-                <input
-                  value={form.notes}
-                  onChange={(e) => setField("notes", e.target.value)}
-                  placeholder="Anything else to remember"
-                  className={inputClass}
-                />
-              )}
-              {field(
-                editingId === null ? "Photo (optional)" : "New photo (optional)",
-                <input
-                  key={fileKey}
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                  className="w-full text-sm"
-                />
-              )}
+            <div>
+              <label className={label}>Final payout (€)</label>
+              <input
+                className={input}
+                inputMode="decimal"
+                value={form.owner_payout}
+                onChange={(e) => set("owner_payout", e.target.value)}
+                placeholder="empty = same as Owner wants"
+              />
             </div>
-
-            <div className="mt-6 flex gap-3">
-              <button
-                disabled={busy}
-                className="rounded-lg bg-[#F28C28] px-6 py-2 text-sm font-semibold text-[#14213D] hover:bg-[#FFA033] disabled:opacity-50"
-              >
-                {busy ? "Saving..." : editingId === null ? "Add phone" : "Save changes"}
-              </button>
-              <button
-                type="button"
-                onClick={closeForm}
-                className="rounded-lg border border-[#E0D2BC] px-6 py-2 text-sm hover:bg-[#F0E6D5]"
-              >
-                Cancel
-              </button>
+            <div>
+              <label className={label}>Status</label>
+              <select className={input} value={form.status} onChange={(e) => set("status", e.target.value)}>
+                {STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
             </div>
-          </form>
-        )}
+            <div>
+              <label className={label}>Brought in on</label>
+              <input className={input} type="date" value={form.received_at} onChange={(e) => set("received_at", e.target.value)} />
+            </div>
+          </div>
 
-        <div className="mb-4 flex flex-wrap gap-2">
-          {FILTERS.map(([value, label]) => (
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div>
+              <label className={label}>Message from the shop (the owner sees this)</label>
+              <textarea
+                className={input}
+                rows={3}
+                value={form.shop_message}
+                onChange={(e) => set("shop_message", e.target.value)}
+                placeholder="e.g. Customer is coming back tomorrow to look at it."
+              />
+            </div>
+            <div>
+              <label className={label}>Private notes (only you see these)</label>
+              <textarea className={input} rows={3} value={form.notes} onChange={(e) => set("notes", e.target.value)} />
+            </div>
+          </div>
+
+          <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl bg-[#F4EDE2] p-3">
+            <input
+              type="checkbox"
+              checked={form.show_online}
+              onChange={(e) => set("show_online", e.target.checked)}
+              className="mt-0.5 h-5 w-5 accent-[#F28C28]"
+            />
+            <span className="text-sm">
+              <b>Show on the website</b> (Phones for sale page)
+              <span className="block text-xs text-[#14213D]/60">
+                Customers see the specs, problems, condition, photo and display price. Never the owner, IMEI, owner price or private notes.
+              </span>
+            </span>
+          </label>
+
+          <div className="mt-3">
+            <label className={label}>Photo</label>
+            <div className="flex items-center gap-3">
+              {existingImage && !photo && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={existingImage} alt="" className="h-14 w-14 rounded-lg object-cover" />
+              )}
+              <input type="file" accept="image/*" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} className="text-sm" />
+            </div>
+          </div>
+
+          <div className="mt-5 flex gap-3">
             <button
-              key={value}
-              onClick={() => setFilter(value)}
-              className={
-                "rounded-full border px-4 py-1 text-sm " +
-                (filter === value
-                  ? "border-[#14213D] bg-[#14213D] text-white"
-                  : "border-[#E0D2BC] bg-white hover:bg-[#F0E6D5]")
-              }
+              type="submit"
+              disabled={saving}
+              className="rounded-full bg-[#14213D] px-6 py-2 font-bold text-white hover:bg-[#14213D]/85 disabled:opacity-50"
             >
-              {label}
+              {saving ? "Saving…" : editId === null ? "Add phone" : "Save changes"}
             </button>
-          ))}
-        </div>
+            <button type="button" onClick={closeForm} className="rounded-full border border-[#14213D]/20 px-5 py-2 font-semibold hover:bg-[#F4EDE2]">
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
 
+      {/* Filters */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {(["all", ...STATUSES] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => setFilter(s)}
+            className={
+              "rounded-full px-4 py-1.5 text-sm font-semibold capitalize ring-1 " +
+              (filter === s ? "bg-[#14213D] text-white ring-[#14213D]" : "bg-white text-[#14213D] ring-[#14213D]/15 hover:bg-[#F4EDE2]")
+            }
+          >
+            {s} <span className="opacity-60">{counts[s] ?? 0}</span>
+          </button>
+        ))}
         <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by model, colour, IMEI or owner"
-          className="mb-6 w-full rounded-lg border border-[#E0D2BC] bg-white px-3 py-2"
+          className={input + " md:ml-auto md:max-w-xs"}
+          placeholder="Search brand, model, IMEI, owner…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
         />
+      </div>
 
-        {loaded && phones.length === 0 && !message && (
-          <p className="rounded-xl bg-white p-6 text-center text-[#14213D]/70 shadow">
-            No phones yet. Click Add phone to register the first one.
-          </p>
-        )}
+      {loading && <p className="py-10 text-center text-[#14213D]/60">Loading…</p>}
+      {!loading && shown.length === 0 && (
+        <p className="rounded-2xl bg-white p-8 text-center text-[#14213D]/60 ring-1 ring-[#14213D]/10">
+          {phones.length === 0 ? "No phones yet. Click “+ Add phone” to add the first one." : "No phones match this filter."}
+        </p>
+      )}
 
-        {phones.length > 0 && shown.length === 0 && (
-          <p className="text-sm text-[#14213D]/60">No phones match this filter or search.</p>
-        )}
-
-        <div className="space-y-4">
-          {shown.map((p) => {
-            const owner = Number(p.owner_price);
-            const display = Number(p.display_price);
-            const soldFor = p.sold_price === null ? null : Number(p.sold_price);
-            const specs = [p.storage, p.ram, p.color].filter(Boolean).join(" · ");
-            const earn = (soldFor ?? display) - owner;
-
-            return (
-              <div key={p.id} className="rounded-xl bg-white p-4 shadow">
-                <div className="flex flex-wrap gap-4">
-                  {p.image_url ? (
-                    <img
-                      src={p.image_url}
-                      alt={p.brand + " " + p.model}
-                      className="h-28 w-28 rounded-lg object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-28 w-28 items-center justify-center rounded-lg bg-[#EADFCB] text-xs text-[#14213D]/60">
-                      No photo
-                    </div>
-                  )}
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-lg font-semibold">
+      {/* The phones */}
+      <div className="space-y-3">
+        {shown.map((p) => {
+          const draft = drafts[String(p.id)];
+          const messageChanged = draft !== undefined && draft.trim() !== (p.shop_message ?? "").trim();
+          return (
+            <div key={p.id} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#14213D]/10">
+              <div className="flex gap-4">
+                {p.image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={p.image_url} alt="" className="h-20 w-20 flex-none rounded-xl object-cover" />
+                ) : (
+                  <div className="flex h-20 w-20 flex-none items-center justify-center rounded-xl bg-[#F4EDE2] text-2xl">📱</div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <div className="text-lg font-extrabold leading-tight">
                         {p.brand} {p.model}
-                      </h3>
-                      <span
-                        className={
-                          "rounded-full border px-3 py-0.5 text-xs capitalize " +
-                          statusBadge(p.status)
-                        }
-                      >
-                        {p.status}
-                      </span>
+                      </div>
+                      <div className="text-sm text-[#14213D]/70">
+                        {[p.storage, p.ram && p.ram + " RAM", p.color, p.condition].filter(Boolean).join(" · ")}
+                      </div>
                     </div>
-
-                    {specs && <p className="text-sm text-[#14213D]/80">{specs}</p>}
-
-                    <p className="mt-1 text-xs text-[#14213D]/60">
-                      {conditionLabel(p.condition)}
-                      {p.battery_health !== null ? " · Battery " + p.battery_health + "%" : ""}
-                      {p.imei ? " · IMEI " + p.imei : ""}
-                    </p>
-
-                    {p.accessories && (
-                      <p className="mt-1 text-xs text-[#14213D]/60">Included: {p.accessories}</p>
-                    )}
-
-                    {p.problems ? (
-                      <p className="mt-2 rounded-lg bg-[#FDE7CC] px-3 py-2 text-sm text-[#C2570C]">
-                        Problems: {p.problems}
-                      </p>
-                    ) : (
-                      <p className="mt-2 text-xs text-[#14213D]/50">No known problems</p>
-                    )}
-
-                    {p.notes && (
-                      <p className="mt-2 text-xs text-[#14213D]/60">Notes: {p.notes}</p>
-                    )}
+                    <span className={"rounded-full px-3 py-1 text-xs font-bold capitalize ring-1 " + (PILL[p.status] ?? PILL.available)}>
+                      {p.status}
+                    </span>
                   </div>
+                  {p.show_online && (p.status === "available" || p.status === "reserved") && (
+                    <div className="mt-1 text-xs font-bold text-emerald-700">🌐 Visible on the website</div>
+                  )}
 
-                  <div className="min-w-[11rem] space-y-1 text-sm">
-                    <p>
-                      Owner wants: <b>{euro(owner)}</b>
-                    </p>
-                    <p>
-                      Display price: <b className="text-[#C2570C]">{euro(display)}</b>
-                    </p>
-                    {soldFor !== null && (
-                      <p>
-                        Sold for: <b>{euro(soldFor)}</b>
-                      </p>
-                    )}
-                    <p className={earn < 0 ? "text-red-700" : ""}>
-                      {p.status === "sold" ? "You earned" : "You would earn"}:{" "}
-                      <b>{euro(earn)}</b>
-                    </p>
-                    <p className="pt-1 text-xs text-[#14213D]/60">
-                      Owner: {p.consignor_name}
-                      {p.consignor_phone ? " (" + p.consignor_phone + ")" : ""}
-                    </p>
-                    <p className="text-xs text-[#14213D]/60">
-                      Received {new Date(p.received_at).toLocaleDateString()}
-                    </p>
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-sm md:grid-cols-4">
+                    <div>
+                      <span className="text-[#14213D]/50">Owner wants </span>
+                      <b>{money(p.owner_price)}</b>
+                    </div>
+                    <div>
+                      <span className="text-[#14213D]/50">Display </span>
+                      <b>{money(p.display_price)}</b>
+                    </div>
                     {p.status === "sold" && (
-                      <p
-                        className={
-                          "text-xs font-medium " +
-                          (p.owner_paid_at ? "text-emerald-700" : "text-[#C2570C]")
-                        }
-                      >
-                        {p.owner_paid_at
-                          ? "Owner paid on " + new Date(p.owner_paid_at).toLocaleDateString()
-                          : "Owner not paid yet"}
-                      </p>
+                      <div>
+                        <span className="text-[#14213D]/50">Sold for </span>
+                        <b>{money(p.sold_price)}</b>
+                      </div>
+                    )}
+                    {p.status === "sold" && (
+                      <div>
+                        <span className="text-[#14213D]/50">Owner </span>
+                        <b className={p.owner_paid_at ? "text-emerald-700" : "text-[#C2570C]"}>
+                          {p.owner_paid_at ? "paid " + fmtDate(p.owner_paid_at) : "not paid yet"}
+                        </b>
+                      </div>
                     )}
                   </div>
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-2 border-t border-[#E6D9C5] pt-3 text-sm">
-                  <button
-                    onClick={() => openEdit(p)}
-                    className="rounded-lg border border-[#E0D2BC] px-3 py-1 hover:bg-[#F0E6D5]"
-                  >
-                    Edit
-                  </button>
-
-                  {(p.status === "available" || p.status === "reserved") && (
-                    <>
-                      <button
-                        onClick={() => markSold(p)}
-                        className="rounded-lg bg-[#F28C28] px-3 py-1 font-semibold text-[#14213D] hover:bg-[#FFA033]"
-                      >
-                        Mark sold
-                      </button>
-                      <button
-                        onClick={() => toggleReserve(p)}
-                        className="rounded-lg border border-[#E0D2BC] px-3 py-1 hover:bg-[#F0E6D5]"
-                      >
-                        {p.status === "reserved" ? "Remove reservation" : "Reserve"}
-                      </button>
-                      <button
-                        onClick={() => returnToOwner(p)}
-                        className="rounded-lg border border-[#E0D2BC] px-3 py-1 hover:bg-[#F0E6D5]"
-                      >
-                        Return to owner
-                      </button>
-                    </>
+                  {p.status === "sold" && p.sold_price !== null && payoutOf(p) !== null && (
+                    <div className="mt-1 text-sm">
+                      <span className="text-[#14213D]/50">Owner gets </span>
+                      <b>{money(payoutOf(p))}</b>
+                      {p.owner_payout !== null && p.owner_payout !== undefined && p.owner_payout !== p.owner_price && (
+                        <span className="text-[#14213D]/50"> (agreed {money(p.owner_price)})</span>
+                      )}
+                      <span className="text-[#14213D]/50"> · Shop made </span>
+                      <b className={Number(p.sold_price) - Number(payoutOf(p)) < 0 ? "text-red-600" : "text-emerald-700"}>
+                        {money(Number(p.sold_price) - Number(payoutOf(p)))}
+                      </b>
+                    </div>
                   )}
 
-                  {p.status === "sold" && !p.owner_paid_at && (
-                    <>
+                  <div className="mt-1 text-sm text-[#14213D]/70">
+                    {[p.consignor_name, p.consignor_phone].filter(Boolean).join(" · ") || "No owner details"}
+                    {p.imei && <span> · IMEI {p.imei}</span>}
+                    {p.received_at && <span> · in since {fmtDate(p.received_at)}</span>}
+                  </div>
+                  {p.portal_code && (
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+                      <span className="text-[#14213D]/50">Portal code</span>
+                      <b className="rounded bg-[#F4EDE2] px-2 py-0.5 font-mono tracking-widest">{p.portal_code}</b>
                       <button
-                        onClick={() => markPaid(p)}
-                        className="rounded-lg bg-[#14213D] px-3 py-1 text-white hover:bg-[#22345C]"
+                        onClick={() => copyInvite(p)}
+                        className="rounded-full border border-[#F28C28] px-3 py-0.5 text-xs font-semibold text-[#C2570C] hover:bg-[#F28C28]/10"
                       >
-                        Mark owner paid
+                        Copy message for owner
                       </button>
-                      <button
-                        onClick={() => undoSale(p)}
-                        className="rounded-lg border border-[#E0D2BC] px-3 py-1 hover:bg-[#F0E6D5]"
-                      >
-                        Undo sale
-                      </button>
-                    </>
+                    </div>
                   )}
-
-                  {p.status === "returned" && (
-                    <button
-                      onClick={() => patch(p, { status: "available" }, "Phone is back in the shop.")}
-                      className="rounded-lg border border-[#E0D2BC] px-3 py-1 hover:bg-[#F0E6D5]"
-                    >
-                      Put back in shop
-                    </button>
-                  )}
-
-                  {p.status !== "sold" && (
-                    <button
-                      onClick={() => removePhone(p)}
-                      className="ml-auto text-red-600 hover:underline"
-                    >
-                      Delete
-                    </button>
-                  )}
+                  {p.problems && <div className="mt-1 text-sm text-[#8a4a0a]">⚠ {p.problems}</div>}
+                  {p.notes && <div className="mt-1 text-sm italic text-[#14213D]/60">Private: {p.notes}</div>}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      </section>
-    </main>
+
+              {/* Message to the owner */}
+              <div className="mt-3 flex flex-col gap-2 md:flex-row">
+                <input
+                  className={input}
+                  placeholder={p.portal_code ? "Message the owner will see in the portal…" : "Add the owner’s phone number (Edit) so they can use the portal…"}
+                  value={draft ?? p.shop_message ?? ""}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [String(p.id)]: e.target.value }))}
+                />
+                <button
+                  onClick={() => saveMessage(p)}
+                  disabled={!messageChanged}
+                  className="rounded-lg bg-[#14213D] px-4 py-2 text-sm font-semibold text-white hover:bg-[#14213D]/85 disabled:opacity-30"
+                >
+                  Save message
+                </button>
+              </div>
+
+              {/* Actions */}
+              <div className="mt-3 flex flex-wrap gap-2 text-sm">
+                <button onClick={() => openEdit(p)} className="rounded-full border border-[#14213D]/20 px-3 py-1 font-semibold hover:bg-[#F4EDE2]">
+                  Edit
+                </button>
+                {p.status === "available" && (
+                  <button onClick={() => patch(p, { status: "reserved" }, "Marked as reserved.")} className="rounded-full border border-[#F28C28] px-3 py-1 font-semibold text-[#C2570C] hover:bg-[#F28C28]/10">
+                    Reserve
+                  </button>
+                )}
+                {(p.status === "available" || p.status === "reserved") && (
+                  <button onClick={() => markSold(p)} className="rounded-full bg-emerald-600 px-3 py-1 font-semibold text-white hover:bg-emerald-700">
+                    Mark sold
+                  </button>
+                )}
+                {p.status === "sold" && !p.owner_paid_at && (
+                  <button onClick={() => markPaid(p)} className="rounded-full bg-[#F28C28] px-3 py-1 font-semibold text-white hover:bg-[#C2570C]">
+                    Mark owner paid
+                  </button>
+                )}
+                {(p.status === "available" || p.status === "reserved") && (
+                  <button onClick={() => patch(p, { status: "returned" }, "Marked as returned to owner.")} className="rounded-full border border-[#14213D]/20 px-3 py-1 font-semibold hover:bg-[#F4EDE2]">
+                    Return to owner
+                  </button>
+                )}
+                {(p.status === "reserved" || p.status === "returned") && (
+                  <button onClick={() => patch(p, { status: "available" }, "Back on display.")} className="rounded-full border border-[#14213D]/20 px-3 py-1 font-semibold hover:bg-[#F4EDE2]">
+                    Back on display
+                  </button>
+                )}
+                {(p.status === "available" || p.status === "reserved") && (
+                  <button
+                    onClick={() =>
+                      patch(p, { show_online: !p.show_online }, p.show_online ? "Hidden from the website." : "Now visible on the website.")
+                    }
+                    className="rounded-full border border-[#14213D]/20 px-3 py-1 font-semibold hover:bg-[#F4EDE2]"
+                  >
+                    {p.show_online ? "Hide from website" : "Show on website"}
+                  </button>
+                )}
+                <button onClick={() => remove(p)} className="ml-auto rounded-full px-3 py-1 font-semibold text-red-600 hover:bg-red-50">
+                  Delete
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
